@@ -4,7 +4,7 @@ import math
 import operator
 import random
 
-# some random number generators
+# some random element generators
 def poission_gen(elem,lmbda):
    def poisson():
       u=random.uniform(0,1)
@@ -160,6 +160,64 @@ def evaluateStack( s, assignments ):
    else:
       return float( op )
 
+
+def generate(root):
+   def generate_node(node,recurse,out):
+      print '-'*10,type(node),id(node),'-'*10
+      if type(node) is str:
+         print node
+         out.append(node)
+      elif type(node) is And:
+         for e in node.exprs:
+            print type(e),e
+         for e in node.exprs:
+            out=generate_node(e,recurse,out)
+      elif type(node) is MatchFirst:
+         for e in node.exprs:
+            print type(e),e
+         e=random.choice(node.exprs)
+         out=generate_node(e,recurse,out)
+      elif type(node) is Optional:
+         print type(node.expr),node.expr
+         if random.randint(0,1):
+            out=generate_node(node.expr,recurse,out)
+      elif type(node) is ZeroOrMore:
+         #TODO:generate from poisson distribution
+         num_times=poission()
+         print type(node.expr),node.expr
+         for _ in range(num_times):
+            out=generate_node(node.expr,recurse,out)
+      elif type(node) is Forward:
+         print type(node.expr),id(node),node.expr
+         out=generate_node(node.expr,recurse,out)
+      elif type(node) is Literal or type(node) is CaselessLiteral:
+         print node.name
+         out=generate_node(node.name,recurse,out)
+      elif type(node) is Suppress:
+         print node.expr
+         out=generate_node(node.expr,recurse,out)
+      elif type(node) is Combine:
+         print node.expr
+         out=generate_node(node.expr,recurse,out)
+      elif type(node) is Word:
+         print node.initChars
+         def choose_number(st):
+            char="+"
+            while char=="+" or char=="-":
+               char=random.choice(node.initChars)
+            if random.randint(0,1):
+               return char
+            else:
+               return "-"+char
+         out=generate_node(choose_number(node.initChars),recurse,out)
+      else:
+         print "Unknown Type: {0}".format(type(node))
+
+      return out
+
+   return generate_node(root,0,[])
+
+
 if __name__ == "__main__":
 
    def test( s, assignments, expVal ):
@@ -172,70 +230,8 @@ if __name__ == "__main__":
       else:
          print s+"!!!", val, "!=", expVal, results, "=>", exprStack
 
-   def generate(root,ntr,out):
-      print '-'*10,type(root),id(root),'-'*10
-      if type(root) is str:
-         print root
-         out.append(root)
-      elif type(root) is And:
-         for expr in root.exprs:
-            print type(expr),expr
-         for expr in root.exprs:
-            out=generate(expr,ntr,out)
-      elif type(root) is MatchFirst:
-         for expr in root.exprs:
-            print type(expr),expr
-         expr=random.choice(root.exprs)
-         out=generate(expr,ntr,out)
-      elif type(root) is Optional:
-         print root.expr,root.expr
-         if random.randint(0,1):
-            out=generate(root.expr,ntr,out)
-      elif type(root) is ZeroOrMore:
-         #TODO:generate from poisson distribution
-         num_times=poission()
-         print type(root.expr),root.expr
-         for _ in range(num_times):
-            out=generate(root.expr,ntr,out)
-      elif type(root) is Forward:
-         if id(root) not in ntr:
-            ntr[id(root)]=0
-         if id(root) == id_expr:
-            ntr[id(root)]+=1
-         print type(root.expr),id(root),root.expr
-         if ntr[id(root)] < poission(3):
-            out=generate(root.expr,ntr,out)
-         else:
-            print "ENDING recursion!"
-      elif type(root) is Literal or type(root) is CaselessLiteral:
-         print root.name
-         out=generate(root.name,ntr,out)
-      elif type(root) is Suppress:
-         print root.expr
-         out=generate(root.expr,ntr,out)
-      elif type(root) is Combine:
-         print root.expr
-         out=generate(root.expr,ntr,out)
-      elif type(root) is Word:
-         print root.initChars
-         def choose_number(st):
-            char="+"
-            while char=="+" or char=="-":
-               char=random.choice(root.initChars)
-            if random.randint(0,1):
-               return char
-            else:
-               return "-"+char
-         out=generate(choose_number(root.initChars),ntr,out)
-      else:
-         print "Unknown Type: {0}".format(type(root))
-
-      return out
-
-
    test("(x-2)+a",{'x':3,'a':5},6)
    test("x-(2+a)",{'x':3,'a':5},-4)
 
-   num_times_recursed={}
-#   output = generate(expr.expr,num_times_recursed,[])
+   output = generate(expr.expr,0,[])
 #   print output
