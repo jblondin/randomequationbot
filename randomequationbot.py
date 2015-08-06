@@ -59,9 +59,9 @@ minus=Literal("-")
 mult=Literal("*")
 div=Literal("/")
 addsub=plus|minus
-gen_probs[addsub]=flip_gen(plus,minus)
+gen_probs[addsub]=flip_gen([plus,minus])
 multdiv=mult|div
-gen_probs[multdiv]=filp_gen(mult,div)
+gen_probs[multdiv]=filp_gen([mult,div])
 
 expon=Literal("^")
 
@@ -75,16 +75,17 @@ point=Literal(".")
 #    Optional(e+Word("+-"+nums,nums)))
 integer=Combine(Word("+-"+nums,nums))
 #ident=Word(alphas,alphas+nums)
-fnident=oneOf("sin cos tan abs",useRegex=False)
-gen_probs[fnident]=
-variable=Word("x",exact=1)
+fnsin=Literal("sin")
+fncos=Literal("cos")
+fntan=Literal("tan")
+fnabs=Literal("abs")
+fnident=fnsin|fncos|fntan|fnabs
+gen_probs[fnident]=choosen_gen([fnsin,fncos,fntan,fnabs],[0.4,0.4,0.1,0.1])
+variable=Literal("x")
 
 # grouping
 lparen=Literal("(").suppress()
 rparen=Literal(")").suppress()
-
-# assignment
-assignment=Literal("=")
 
 def pushFirst( strg, loc, toks ):
    exprStack.append( toks[0] )
@@ -98,14 +99,11 @@ expr=Forward()
 optneg=Optional("-")
 functioncall=fnident+lparen+expr+rparen
 atom_base=pi|e|integer|functioncall|variable
-
-atom_base_probs=[0.1,0.1,0.3,0.2,0.3]
-atom_base_probs_recurselimit=[0.1,0.1,0.4,0.0,0.4]
+gen_probs[atom_base]=([0.1,0.1,0.3,0.2,0.3],[0.1,0.1,0.4,0.0,0.4])
 parenthetical=lparen+expr.suppress()+rparen
 atom_part1=optneg+atom_base
 atom=atom_part1.setParseAction(pushFirst)|parenthetical.setParseAction(pushUMinus)
-atom_probs=[0.5,0.5]
-arom_probs_recurselimit=[1.0,0.0]
+gen_probs[atom]=([0.5,0.5],[1.0,0.0])
 # atom = (Optional("-")+(pi|e|number|fnident+lparen+expr+rparen|variable).setParseAction(pushFirst)|\
 #    (lparen+expr.suppress()+rparen)).setParseAction(pushUMinus)
 print type(atom),id(atom),atom,len(atom.exprs)
