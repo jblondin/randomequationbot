@@ -5,7 +5,7 @@ import operator
 import random
 
 # some random element generators
-def poission_gen(elem,lmbda):
+def poisson_gen(elem,lmbda):
    def poisson():
       u=random.uniform(0,1)
       x=0
@@ -24,7 +24,7 @@ def choose_gen(elems,probs):
    def choose():
       u=random.uniform(0,1)
       cum=0.0
-      for i in range(len(lst)):
+      for i in range(len(elems)):
          cum+=probs[i]
          if u<cum:
             return elems[i]
@@ -42,15 +42,36 @@ def bernoulli_gen(elems,p):
       u=random.uniform(0,1)
       if u<p:
          return elems[0]
-      return elem[1]
+      return elems[1]
 
    return flip
+
+def bernoulli(p):
+   return bernoulli_gen([True,False],p)()
 
 def flip_gen(elems):
    return bernoulli_gen(elems,0.5)
 
+def flip():
+   return bernoulli(0.5)
+
+def num_gen(chars):
+   def choose_number():
+      char_list=list(chars)
+      char="+"
+      while char=="+" or char=="-":
+         char=random.choice(char_list)
+      if flip():
+         return char
+      else:
+         return "-"+char
+
+   return choose_number
+
+
+
 # every optionnal, matchfirst, or ZeroOrMore needs to have a probability defined in this dict
-gen_probs={}
+generators={}
 
 
 # operators
@@ -59,9 +80,9 @@ minus=Literal("-")
 mult=Literal("*")
 div=Literal("/")
 addsub=plus|minus
-gen_probs[addsub]=flip_gen([plus,minus])
+generators[addsub]=flip_gen([plus,minus])
 multdiv=mult|div
-gen_probs[multdiv]=filp_gen([mult,div])
+generators[multdiv]=flip_gen([mult,div])
 
 expon=Literal("^")
 
@@ -74,13 +95,15 @@ point=Literal(".")
 # number=Combine(Word("+-"+nums,nums)+Optional(point+Optional(Word(nums)))+\
 #    Optional(e+Word("+-"+nums,nums)))
 integer=Combine(Word("+-"+nums,nums))
+generators[integer.expr]=num_gen(nums)
+
 #ident=Word(alphas,alphas+nums)
 fnsin=Literal("sin")
 fncos=Literal("cos")
 fntan=Literal("tan")
 fnabs=Literal("abs")
 fnident=fnsin|fncos|fntan|fnabs
-gen_probs[fnident]=choosen_gen([fnsin,fncos,fntan,fnabs],[0.4,0.4,0.1,0.1])
+generators[fnident]=choose_gen([fnsin,fncos,fntan,fnabs],[0.4,0.4,0.1,0.1])
 variable=Literal("x")
 
 # grouping
@@ -99,28 +122,38 @@ expr=Forward()
 optneg=Optional("-")
 functioncall=fnident+lparen+expr+rparen
 atom_base=pi|e|integer|functioncall|variable
-gen_probs[atom_base]=([0.1,0.1,0.3,0.2,0.3],[0.1,0.1,0.4,0.0,0.4])
+atom_base_choices=[pi,e,integer,functioncall,variable]
+generators[atom_base]=(choose_gen(atom_base_choices,[0.1,0.1,0.3,0.2,0.3]),\
+   choose_gen(atom_base_choices,[0.1,0.1,0.4,0.0,0.4]))
 parenthetical=lparen+expr.suppress()+rparen
 atom_part1=optneg+atom_base
 atom=atom_part1.setParseAction(pushFirst)|parenthetical.setParseAction(pushUMinus)
-gen_probs[atom]=([0.5,0.5],[1.0,0.0])
+atom_choices=[atom_part1,parenthetical]
+generators[atom]=(choose_gen(atom_choices,[0.5,0.5]),choose_gen(atom_choices,[1.0,0.0]))
 # atom = (Optional("-")+(pi|e|number|fnident+lparen+expr+rparen|variable).setParseAction(pushFirst)|\
 #    (lparen+expr.suppress()+rparen)).setParseAction(pushUMinus)
-print type(atom),id(atom),atom,len(atom.exprs)
 # print type(atom1),id(atom1),atom1,len(atom1.exprs)
-e1=atom.exprs[0]
-print type(e1),id(e1),e1
 
 # for e in atom.exprs:
 #    print type(e),id(e),e
 
 # by defining exponentiation as "atom [ ^ factor ]..." instead of "atom [ ^ atom ]...", we get right-to-left exponents, instead of left-to-righ
 # that is, 2^3^2 = 2^(3^2), not (2^3)^2.
-factor = Forward()
-factor << atom + ZeroOrMore( ( expon + factor ).setParseAction( pushFirst ) )
+factor=Forward()
+exponfactor=(expon+lparen+factor+rparen).setParseAction(pushFirst)
+zom_exponfactor=ZeroOrMore(exponfactor)
+generators[zom_exponfactor]=poisson_gen(exponfactor,0.5)
+factor << atom + zom_exponfactor
 
-term = factor + ZeroOrMore( ( multdiv + factor ).setParseAction( pushFirst ) )
-expr << term + ZeroOrMore( ( addsub + term ).setParseAction( pushFirst ) )
+multdivfactor=(multdiv+factor).setParseAction(pushFirst)
+zom_multdivfactor=ZeroOrMore(multdivfactor)
+generators[zom_multdivfactor]=poisson_gen(multdivfactor,0.5)
+term=factor+zom_multdivfactor
+
+addsubterm=(addsub+term).setParseAction(pushFirst)
+zom_addsubterm=ZeroOrMore(addsubterm)
+generators[zom_addsubterm]=poisson_gen(addsubterm,0.5)
+expr << term+zom_addsubterm
 
 id_expr=id(expr)
 
@@ -160,13 +193,20 @@ def evaluateStack( s, assignments ):
    else:
       return float( op )
 
+class GeneratorError(Exception):
+  '''Base class for generator errors'''
 
-def generate(root):
+  @property
+  def message(self):
+    '''Returns the first argument used to construct this error.'''
+    return self.args[0]
+
+def generate(root,recurselimit=1):
    def generate_node(node,recurse,out):
       print '-'*10,type(node),id(node),'-'*10
       if type(node) is str:
          print node
-         out.append(node)
+         out.append("".join("".join(node.split('"')).split("'")).lower())
       elif type(node) is And:
          for e in node.exprs:
             print type(e),e
@@ -175,20 +215,32 @@ def generate(root):
       elif type(node) is MatchFirst:
          for e in node.exprs:
             print type(e),e
-         e=random.choice(node.exprs)
+         if node not in generators:
+            raise GeneratorError("No MatchFirst found for: {0}".format(e))
+         if type(generators[node]) is tuple:
+            if recurse<recurselimit:
+               e=generators[node][0]()
+            else:
+               e=generators[node][1]()
+         else:
+            e=generators[node]()
          out=generate_node(e,recurse,out)
       elif type(node) is Optional:
          print type(node.expr),node.expr
-         if random.randint(0,1):
+         if flip():
             out=generate_node(node.expr,recurse,out)
       elif type(node) is ZeroOrMore:
          #TODO:generate from poisson distribution
-         num_times=poission()
          print type(node.expr),node.expr
-         for _ in range(num_times):
-            out=generate_node(node.expr,recurse,out)
+         if node not in generators:
+            raise GeneratorError("No ZeroOrMore found for: {0}".format(e))
+         exprs=generators[node]()
+         for e in exprs:
+            out=generate_node(e,recurse,out)
       elif type(node) is Forward:
          print type(node.expr),id(node),node.expr
+         if id(node)==id_expr:
+            recurse+=1
          out=generate_node(node.expr,recurse,out)
       elif type(node) is Literal or type(node) is CaselessLiteral:
          print node.name
@@ -201,15 +253,9 @@ def generate(root):
          out=generate_node(node.expr,recurse,out)
       elif type(node) is Word:
          print node.initChars
-         def choose_number(st):
-            char="+"
-            while char=="+" or char=="-":
-               char=random.choice(node.initChars)
-            if random.randint(0,1):
-               return char
-            else:
-               return "-"+char
-         out=generate_node(choose_number(node.initChars),recurse,out)
+         if node not in generators:
+            raise GeneratorError("No Word generator found for: {0}".format(node))
+         out=generate_node(generators[node](),recurse,out)
       else:
          print "Unknown Type: {0}".format(type(node))
 
@@ -233,5 +279,8 @@ if __name__ == "__main__":
    test("(x-2)+a",{'x':3,'a':5},6)
    test("x-(2+a)",{'x':3,'a':5},-4)
 
-   output = generate(expr.expr,0,[])
-#   print output
+   output = generate(expr.expr)
+   output_str="".join(output)
+   output_str_pruned="-".join(output_str.split("--"))
+   print output_str
+   print output_str_pruned
