@@ -126,9 +126,8 @@ atom_base_choices=[pi,e,integer,functioncall,variable]
 generators[atom_base]=(choose_gen(atom_base_choices,[0.1,0.1,0.3,0.2,0.3]),\
    choose_gen(atom_base_choices,[0.1,0.1,0.4,0.0,0.4]))
 parenthetical=lparen+expr.suppress()+rparen
-atom_part1=optneg+atom_base
-atom=atom_part1.setParseAction(pushFirst)|parenthetical.setParseAction(pushUMinus)
-atom_choices=[atom_part1,parenthetical]
+atom=(optneg+atom_base.setParseAction(pushFirst)|parenthetical).setParseAction(pushUMinus)
+atom_choices=[atom_base,parenthetical]
 generators[atom]=(choose_gen(atom_choices,[0.5,0.5]),choose_gen(atom_choices,[1.0,0.0]))
 # atom = (Optional("-")+(pi|e|number|fnident+lparen+expr+rparen|variable).setParseAction(pushFirst)|\
 #    (lparen+expr.suppress()+rparen)).setParseAction(pushUMinus)
@@ -142,7 +141,7 @@ generators[atom]=(choose_gen(atom_choices,[0.5,0.5]),choose_gen(atom_choices,[1.
 factor=Forward()
 exponfactor=(expon+lparen+factor+rparen).setParseAction(pushFirst)
 zom_exponfactor=ZeroOrMore(exponfactor)
-generators[zom_exponfactor]=poisson_gen(exponfactor,0.5)
+generators[zom_exponfactor]=poisson_gen(exponfactor,0.2)
 factor << atom + zom_exponfactor
 
 multdivfactor=(multdiv+factor).setParseAction(pushFirst)
@@ -170,7 +169,6 @@ fn  = { "sin" : math.sin,
         "trunc" : lambda a: int(a),
         "round" : round,
         "sgn" : lambda a: abs(a)>epsilon and cmp(a,0) or 0}
-vars=['x']
 
 def evaluateStack( s, assignments ):
    op = s.pop()
@@ -276,11 +274,26 @@ if __name__ == "__main__":
       else:
          print s+"!!!", val, "!=", expVal, results, "=>", exprStack
 
-   test("(x-2)+a",{'x':3,'a':5},6)
-   test("x-(2+a)",{'x':3,'a':5},-4)
+   def evaluate(s,assignments):
+      global exprStack
+      exprStack=[]
+      results = expr.parseString( s )
+      val = evaluateStack( exprStack[:], assignments )
+      print s,
+      for k in assignments:
+         print "{0}={1}".format(k,assignments[k]),
+      print val
+
+   test("(x-2)+x",{'x':3},6)
+   test("x-(2+x)",{'x':3},-4)
 
    output = generate(expr.expr)
    output_str="".join(output)
    output_str_pruned="-".join(output_str.split("--"))
    print output_str
-   print output_str_pruned
+   print output_str_pruned, len(output_str_pruned)
+   # if output_str_pruned[0]=="(" and output_str_pruned[-1]==")":
+   #    output_str_pruned=output_str_pruned[1:-1]
+   # test(output_str_pruned,{'x':5},0)
+
+   evaluate(output_str_pruned,{'x':5})
