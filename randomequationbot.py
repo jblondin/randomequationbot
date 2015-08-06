@@ -68,128 +68,187 @@ def num_gen(chars):
 
    return choose_number
 
+class EquationGrammar(object):
+   def __init__(self):
+      self._expr_stack=[]
 
+      # every optional, matchfirst, or ZeroOrMore needs to have a probability defined in this dict
+      self._generators={}
 
-# every optionnal, matchfirst, or ZeroOrMore needs to have a probability defined in this dict
-generators={}
+      # operators
+      plus=Literal("+")
+      minus=Literal("-")
+      mult=Literal("*")
+      div=Literal("/")
+      addsub=plus|minus
+      self._generators[addsub]=flip_gen([plus,minus])
+      multdiv=mult|div
+      self._generators[multdiv]=flip_gen([mult,div])
 
+      # constants
+      pi=CaselessLiteral("PI")
+      e=CaselessLiteral("E")
 
-# operators
-plus=Literal("+")
-minus=Literal("-")
-mult=Literal("*")
-div=Literal("/")
-addsub=plus|minus
-generators[addsub]=flip_gen([plus,minus])
-multdiv=mult|div
-generators[multdiv]=flip_gen([mult,div])
+      # numbers and identifiers
+      point=Literal(".")
+      # number=Combine(Word("+-"+nums,nums)+Optional(point+Optional(Word(nums)))+\
+      #    Optional(e+Word("+-"+nums,nums)))
+      integer=Combine(Word("+-"+nums,nums))
+      self._generators[integer.expr]=num_gen(nums)
 
-expon=Literal("^")
+      #ident=Word(alphas,alphas+nums)
+      fnsin=Literal("sin")
+      fncos=Literal("cos")
+      fntan=Literal("tan")
+      fnabs=Literal("abs")
+      fnident=fnsin|fncos|fntan|fnabs
+      self._generators[fnident]=choose_gen([fnsin,fncos,fntan,fnabs],[0.4,0.4,0.1,0.1])
+      variable=Literal("x")
 
-# constants
-pi=CaselessLiteral("PI")
-e=CaselessLiteral("E")
+      # grouping
+      lparen=Literal("(").suppress()
+      rparen=Literal(")").suppress()
 
-# numbers and identifiers
-point=Literal(".")
-# number=Combine(Word("+-"+nums,nums)+Optional(point+Optional(Word(nums)))+\
-#    Optional(e+Word("+-"+nums,nums)))
-integer=Combine(Word("+-"+nums,nums))
-generators[integer.expr]=num_gen(nums)
+      # expressions
+      self._expr=Forward()
+      optneg=Optional("-")
+      functioncall=fnident+lparen+self._expr+rparen
+      atom_base=pi|e|integer|functioncall|variable
+      atom_base_choices=[pi,e,integer,functioncall,variable]
+      self._generators[atom_base]=(choose_gen(atom_base_choices,[0.1,0.1,0.2,0.3,0.3]),\
+         choose_gen(atom_base_choices,[0.1,0.1,0.4,0.0,0.4]))
+      parenthetical=lparen+self._expr.suppress()+rparen
+      atom=(optneg+atom_base.setParseAction(self.push_first)|parenthetical).setParseAction(\
+         self.push_uminus)
+      atom_choices=[atom_base,parenthetical]
+      self._generators[atom]=(choose_gen(atom_choices,[0.5,0.5]),choose_gen(atom_choices,[1.0,0.0]))
 
-#ident=Word(alphas,alphas+nums)
-fnsin=Literal("sin")
-fncos=Literal("cos")
-fntan=Literal("tan")
-fnabs=Literal("abs")
-fnident=fnsin|fncos|fntan|fnabs
-generators[fnident]=choose_gen([fnsin,fncos,fntan,fnabs],[0.4,0.4,0.1,0.1])
-variable=Literal("x")
+      # by defining exponentiation as "atom [ ^ factor ]..." instead of "atom [ ^ atom ]...", we get
+      # right-to-left exponents, instead of left-to-right
+      # that is, 2^3^2 = 2^(3^2), not (2^3)^2.
+      factor=Forward()
+      # parse either curly braces or parenthesis, but only generate curly braces
+      expon=Literal("^")
+      exponlparen=Literal("{").suppress()
+      exponrparen=Literal("}").suppress()
+      mf_lparen=exponlparen|lparen
+      lparen_choices=[exponlparen,lparen]
+      self._generators[mf_lparen]=choose_gen(lparen_choices,[1.0,0.0])
+      mf_rparen=exponrparen|rparen
+      rparen_choices=[exponrparen,rparen]
+      self._generators[mf_rparen]=choose_gen(rparen_choices,[1.0,0.0])
 
-# grouping
-lparen=Literal("(").suppress()
-rparen=Literal(")").suppress()
+      exponfactor=(expon+mf_lparen.suppress()+factor+mf_rparen.suppress()).setParseAction(\
+         self.push_first)
+      zom_exponfactor=ZeroOrMore(exponfactor)
+      self._generators[zom_exponfactor]=poisson_gen(exponfactor,0.2)
+      factor << atom + zom_exponfactor
 
-def pushFirst( strg, loc, toks ):
-   exprStack.append( toks[0] )
+      multdivfactor=(multdiv+factor).setParseAction(self.push_first)
+      zom_multdivfactor=ZeroOrMore(multdivfactor)
+      self._generators[zom_multdivfactor]=poisson_gen(multdivfactor,0.5)
+      term=factor+zom_multdivfactor
 
-def pushUMinus( strg, loc, toks ):
-   if toks and toks[0]=='-':
-      exprStack.append( 'unary -' )
+      addsubterm=(addsub+term).setParseAction(self.push_first)
+      zom_addsubterm=ZeroOrMore(addsubterm)
+      self._generators[zom_addsubterm]=poisson_gen(addsubterm,0.5)
+      self._expr << term+zom_addsubterm
 
-# expressions
-expr=Forward()
-optneg=Optional("-")
-functioncall=fnident+lparen+expr+rparen
-atom_base=pi|e|integer|functioncall|variable
-atom_base_choices=[pi,e,integer,functioncall,variable]
-generators[atom_base]=(choose_gen(atom_base_choices,[0.1,0.1,0.3,0.2,0.3]),\
-   choose_gen(atom_base_choices,[0.1,0.1,0.4,0.0,0.4]))
-parenthetical=lparen+expr.suppress()+rparen
-atom=(optneg+atom_base.setParseAction(pushFirst)|parenthetical).setParseAction(pushUMinus)
-atom_choices=[atom_base,parenthetical]
-generators[atom]=(choose_gen(atom_choices,[0.5,0.5]),choose_gen(atom_choices,[1.0,0.0]))
-# atom = (Optional("-")+(pi|e|number|fnident+lparen+expr+rparen|variable).setParseAction(pushFirst)|\
-#    (lparen+expr.suppress()+rparen)).setParseAction(pushUMinus)
-# print type(atom1),id(atom1),atom1,len(atom1.exprs)
+      self._id_expr=id(self._expr)
 
-# for e in atom.exprs:
-#    print type(e),id(e),e
+   def set_expr_stack(self,expr_stack):
+      self._expr_stack=expr_stack
 
-# by defining exponentiation as "atom [ ^ factor ]..." instead of "atom [ ^ atom ]...", we get right-to-left exponents, instead of left-to-righ
-# that is, 2^3^2 = 2^(3^2), not (2^3)^2.
-factor=Forward()
-exponfactor=(expon+lparen+factor+rparen).setParseAction(pushFirst)
-zom_exponfactor=ZeroOrMore(exponfactor)
-generators[zom_exponfactor]=poisson_gen(exponfactor,0.2)
-factor << atom + zom_exponfactor
+   def push_first(self,strg,loc,toks):
+      self._expr_stack.append(toks[0])
 
-multdivfactor=(multdiv+factor).setParseAction(pushFirst)
-zom_multdivfactor=ZeroOrMore(multdivfactor)
-generators[zom_multdivfactor]=poisson_gen(multdivfactor,0.5)
-term=factor+zom_multdivfactor
+   def push_uminus(self,strg,loc,toks):
+      if toks and toks[0]=='-':
+         self._expr_stack.append('unary -')
 
-addsubterm=(addsub+term).setParseAction(pushFirst)
-zom_addsubterm=ZeroOrMore(addsubterm)
-generators[zom_addsubterm]=poisson_gen(addsubterm,0.5)
-expr << term+zom_addsubterm
+   def parse_string(self,s):
+      return self._expr.parseString(s)
 
-id_expr=id(expr)
+   @property
+   def generators(self):
+       return self._generators
 
-epsilon = 1e-12
-opn = { "+" : operator.add,
-        "-" : operator.sub,
-        "*" : operator.mul,
-        "/" : operator.truediv,
-        "^" : operator.pow }
-fn  = { "sin" : math.sin,
-        "cos" : math.cos,
-        "tan" : math.tan,
-        "abs" : abs,
-        "trunc" : lambda a: int(a),
-        "round" : round,
-        "sgn" : lambda a: abs(a)>epsilon and cmp(a,0) or 0}
+   @property
+   def id_expr(self):
+       return self._id_expr
 
-def evaluateStack( s, assignments ):
-   op = s.pop()
-   if op == 'unary -':
-      return -evaluateStack( s,assignments )
-   if op in "+-*/^":
-      op2 = evaluateStack( s,assignments )
-      op1 = evaluateStack( s,assignments )
-      return opn[op]( op1, op2 )
-   elif op == "PI":
-      return math.pi # 3.1415926535
-   elif op == "E":
-      return math.e  # 2.718281828
-   elif op in fn:
-      return fn[op]( evaluateStack( s,assignments ) )
-   elif op[0].isalpha():
-      if len(op)==1 and op in assignments.keys():
-         return assignments[op]
-      return 0
-   else:
-      return float( op )
+   @property
+   def expr_stack(self):
+       return self._expr_stack
+
+   @property
+   def root(self):
+       return self._expr
+
+class EquationEvaluator(object):
+   def __init__(self,grammar=EquationGrammar()):
+      self._expr_stack=[]
+      self._grammar=grammar
+      self._epsilon = 1e-12
+      self._opn = { "+" : operator.add,
+                    "-" : operator.sub,
+                    "*" : operator.mul,
+                    "/" : operator.truediv,
+                    "^" : operator.pow }
+      self._fn  = { "sin" : math.sin,
+                    "cos" : math.cos,
+                    "tan" : math.tan,
+                    "abs" : abs,
+                    "trunc" : lambda a: int(a),
+                    "round" : round,
+                    "sgn" : lambda a: abs(a)>self._epsilon and cmp(a,0) or 0}
+
+   def evaluate_stack(self,s,assignments):
+      op=s.pop()
+      if op == 'unary -':
+         return -self.evaluate_stack(s,assignments)
+      if op in "+-*/^":
+         op2=self.evaluate_stack(s,assignments)
+         op1=self.evaluate_stack(s,assignments)
+         return self._opn[op](op1,op2)
+      elif op == "PI":
+         return math.pi # 3.1415926535
+      elif op == "E":
+         return math.e  # 2.718281828
+      elif op in self._fn:
+         return self._fn[op](self.evaluate_stack(s,assignments))
+      elif op[0].isalpha():
+         if len(op)==1 and op in assignments.keys():
+            return assignments[op]
+         return 0
+      else:
+         return float(op)
+
+   def evaluate(self,string,assignments):
+      self._expr_stack=[]
+      self._grammar.set_expr_stack(self._expr_stack)
+      results=self._grammar.parse_string(string)
+      val=self.evaluate_stack(self._expr_stack[:],assignments)
+      return results,val
+
+   def evaluate_print(self,s,assignments):
+      results,val=self.evaluate(s,assignments)
+      print s,
+      for k in assignments:
+         print "{0}={1}".format(k,assignments[k]),
+      print val
+      print results,self._expr_stack
+
+   def test(self,s,assignments,expected):
+      results,val=self.evaluate(s,assignments)
+      if val == float(expected):
+         print s, "=", val, results, "=>", self._expr_stack
+      else:
+         print s+"!!!", val, "!=", expected, results, "=>", self._expr_stack
+
+   @property
+   def grammar(self):
+       return self._grammar
 
 class GeneratorError(Exception):
   '''Base class for generator errors'''
@@ -199,101 +258,143 @@ class GeneratorError(Exception):
     '''Returns the first argument used to construct this error.'''
     return self.args[0]
 
-def generate(root,recurselimit=1):
-   def generate_node(node,recurse,out):
-      print '-'*10,type(node),id(node),'-'*10
-      if type(node) is str:
-         print node
-         out.append("".join("".join(node.split('"')).split("'")).lower())
-      elif type(node) is And:
-         for e in node.exprs:
-            print type(e),e
-         for e in node.exprs:
-            out=generate_node(e,recurse,out)
-      elif type(node) is MatchFirst:
-         for e in node.exprs:
-            print type(e),e
-         if node not in generators:
-            raise GeneratorError("No MatchFirst found for: {0}".format(e))
-         if type(generators[node]) is tuple:
-            if recurse<recurselimit:
-               e=generators[node][0]()
+class EquationGenerator(object):
+   def __init__(self,evaluator=EquationEvaluator()):
+      self._evaluator=evaluator
+      self._generators=self._evaluator.grammar.generators
+      self._grammar=self._evaluator.grammar
+
+   def generate(self,root,recurselimit=2,debug=False):
+      def generate_node(node,recurse,out):
+         if debug:
+            print '-'*10,type(node),id(node),'-'*10
+         if type(node) is str:
+            if debug:
+               print node
+            out.append("".join("".join(node.split('"')).split("'")).lower())
+         elif type(node) is And:
+            if debug:
+               for e in node.exprs:
+                  print type(e),e
+            for e in node.exprs:
+               out=generate_node(e,recurse,out)
+         elif type(node) is MatchFirst:
+            if debug:
+               for e in node.exprs:
+                  print type(e),e
+            if node not in self._generators:
+               raise GeneratorError("No MatchFirst found for: {0}".format(e))
+            if type(self._generators[node]) is tuple:
+               if recurse<recurselimit:
+                  e=self._generators[node][0]()
+               else:
+                  e=self._generators[node][1]()
             else:
-               e=generators[node][1]()
-         else:
-            e=generators[node]()
-         out=generate_node(e,recurse,out)
-      elif type(node) is Optional:
-         print type(node.expr),node.expr
-         if flip():
-            out=generate_node(node.expr,recurse,out)
-      elif type(node) is ZeroOrMore:
-         #TODO:generate from poisson distribution
-         print type(node.expr),node.expr
-         if node not in generators:
-            raise GeneratorError("No ZeroOrMore found for: {0}".format(e))
-         exprs=generators[node]()
-         for e in exprs:
+               e=self._generators[node]()
             out=generate_node(e,recurse,out)
-      elif type(node) is Forward:
-         print type(node.expr),id(node),node.expr
-         if id(node)==id_expr:
-            recurse+=1
-         out=generate_node(node.expr,recurse,out)
-      elif type(node) is Literal or type(node) is CaselessLiteral:
-         print node.name
-         out=generate_node(node.name,recurse,out)
-      elif type(node) is Suppress:
-         print node.expr
-         out=generate_node(node.expr,recurse,out)
-      elif type(node) is Combine:
-         print node.expr
-         out=generate_node(node.expr,recurse,out)
-      elif type(node) is Word:
-         print node.initChars
-         if node not in generators:
-            raise GeneratorError("No Word generator found for: {0}".format(node))
-         out=generate_node(generators[node](),recurse,out)
-      else:
-         print "Unknown Type: {0}".format(type(node))
+         elif type(node) is Optional:
+            if debug:
+               print type(node.expr),node.expr
+            if flip():
+               out=generate_node(node.expr,recurse,out)
+         elif type(node) is ZeroOrMore:
+            if debug:
+               print type(node.expr),node.expr
+            if node not in self._generators:
+               raise GeneratorError("No ZeroOrMore found for: {0}".format(e))
+            exprs=self._generators[node]()
+            for e in exprs:
+               out=generate_node(e,recurse,out)
+         elif type(node) is Forward:
+            if debug:
+               print type(node.expr),id(node),node.expr
+            if id(node)==self._grammar.id_expr:
+               recurse+=1
+            out=generate_node(node.expr,recurse,out)
+         elif type(node) is Literal or type(node) is CaselessLiteral:
+            if debug:
+               print node.name
+            out=generate_node(node.name,recurse,out)
+         elif type(node) is Suppress:
+            if debug:
+               print node.expr
+            out=generate_node(node.expr,recurse,out)
+         elif type(node) is Combine:
+            if debug:
+               print node.expr
+            out=generate_node(node.expr,recurse,out)
+         elif type(node) is Word:
+            if debug:
+               print node.initChars
+            if node not in self._generators:
+               raise GeneratorError("No Word generator found for: {0}".format(node))
+            out=generate_node(self._generators[node](),recurse,out)
+         else:
+            raise GeneratorError("Unknown Type: {0}".format(type(node)))
 
-      return out
+         return out
 
-   return generate_node(root,0,[])
+      return generate_node(self._grammar.root,0,[])
 
+   @classmethod
+   def tokens_to_base_string(cls,tokens):
+      # remove double negative
+      return "-".join("".join(tokens).split("--"))
+
+   @classmethod
+   def base_to_latex(cls,base):
+      # changes asterisk to dots
+      return "\cdot".join(base.split("*"))
+
+   @classmethod
+   def tokens_to_latex_string(cls,tokens):
+      return self.base_to_latex(self.tokens_to_base_string(tokens))
+
+   @classmethod
+   def base_to_parseable(cls,base):
+      return ")".join("(".join(base.split("{")).split("}"))
+
+   @classmethod
+   def tokens_to_parseable_string(cls,tokens):
+      return cls.base_to_parseable(cls.tokens_to_base_string(tokens))
+
+   def generate_valid(self,min_token_length=1,max_token_length=100,\
+         min_string_length=1,max_string_length=135):
+      valid=False
+      while not valid:
+         tokens=self.generate(self._grammar.root)
+         valid=True
+         s=self.tokens_to_parseable_string(tokens)
+         if len(s)<min_string_length or len(s)>max_string_length or \
+               len(tokens)<min_token_length or len(tokens)>max_token_length:
+            valid=False
+            continue
+         try:
+            for x in [float(x)/100. for x in range(-1000,1000)]:
+               self._evaluator.evaluate(s,{'x':x})
+         except Exception,e:
+            valid=False
+            print "Bad evaluation: {0}".format(e.message)
+      return tokens
 
 if __name__ == "__main__":
 
-   def test( s, assignments, expVal ):
-      global exprStack
-      exprStack = []
-      results = expr.parseString( s )
-      val = evaluateStack( exprStack[:], assignments )
-      if val == expVal:
-         print s, "=", val, results, "=>", exprStack
-      else:
-         print s+"!!!", val, "!=", expVal, results, "=>", exprStack
+   evaluator=EquationEvaluator()
+   generator=EquationGenerator(evaluator)
 
-   def evaluate(s,assignments):
-      global exprStack
-      exprStack=[]
-      results = expr.parseString( s )
-      val = evaluateStack( exprStack[:], assignments )
-      print s,
-      for k in assignments:
-         print "{0}={1}".format(k,assignments[k]),
-      print val
+   evaluator.test("(x-2)+x",{'x':3},4)
+   evaluator.test("x-(2+x)",{'x':3},-2)
+   evaluator.test("x*x^(x^(2))",{'x':5},1490116119384765625)
+   output=generator.generate_valid(min_token_length=4)
+   output_str_base=generator.tokens_to_base_string(output)
+   print output_str_base, "len={0}".format(len(output_str_base))
 
-   test("(x-2)+x",{'x':3},6)
-   test("x-(2+x)",{'x':3},-4)
+   output_str_parseable=generator.base_to_parseable(output_str_base)
 
-   output = generate(expr.expr)
-   output_str="".join(output)
-   output_str_pruned="-".join(output_str.split("--"))
-   print output_str
-   print output_str_pruned, len(output_str_pruned)
-   # if output_str_pruned[0]=="(" and output_str_pruned[-1]==")":
-   #    output_str_pruned=output_str_pruned[1:-1]
-   # test(output_str_pruned,{'x':5},0)
+   print output_str_parseable
+   evaluator.evaluate_print(output_str_parseable,{'x':5})
 
-   evaluate(output_str_pruned,{'x':5})
+   import urllib
+   print urllib.quote_plus(generator.base_to_latex(output_str_base))
+
+
