@@ -1,8 +1,14 @@
-from pyparsing import Literal,CaselessLiteral,Word,Combine,Group,Optional,ZeroOrMore,Forward,nums,\
-   alphas,And,MatchFirst,Suppress,oneOf
 import math
 import operator
 import random
+
+from pyparsing import Literal,CaselessLiteral,Word,Combine,Group,Optional,ZeroOrMore,Forward,nums,\
+   alphas,And,MatchFirst,Suppress,oneOf
+
+from imagebot import ImageBot
+import duration
+
+import requests
 
 # some random element generators
 def poisson_gen(elem,lmbda):
@@ -61,12 +67,17 @@ def num_gen(chars):
       char="+"
       while char=="+" or char=="-":
          char=random.choice(char_list)
+      neg=""
       if flip():
-         return char
-      else:
-         return "-"+char
+         neg="~"
+      return "{0}{1}".format(neg,char)
 
    return choose_number
+
+def passthrough_gen(elem):
+   def passthrough():
+      return elem
+   return passthrough
 
 class EquationGrammar(object):
    def __init__(self):
@@ -91,8 +102,6 @@ class EquationGrammar(object):
 
       # numbers and identifiers
       point=Literal(".")
-      # number=Combine(Word("+-"+nums,nums)+Optional(point+Optional(Word(nums)))+\
-      #    Optional(e+Word("+-"+nums,nums)))
       integer=Combine(Word("+-"+nums,nums))
       self._generators[integer.expr]=num_gen(nums)
 
@@ -112,6 +121,7 @@ class EquationGrammar(object):
       # expressions
       self._expr=Forward()
       optneg=Optional("-")
+      self._generators[optneg]=flip_gen(["-",None])
       functioncall=fnident+lparen+self._expr+rparen
       atom_base=pi|e|integer|functioncall|variable
       atom_base_choices=[pi,e,integer,functioncall,variable]
@@ -295,8 +305,13 @@ class EquationGenerator(object):
          elif type(node) is Optional:
             if debug:
                print type(node.expr),node.expr
-            if flip():
-               out=generate_node(node.expr,recurse,out)
+            e=self._generators[node]()
+            if e:
+               # translate unary minus to ~
+               if e=="-":
+                  out=generate_node("~",recurse,out)
+               else:
+                  out=generate_node(e,recurse,out)
          elif type(node) is ZeroOrMore:
             if debug:
                print type(node.expr),node.expr
@@ -337,22 +352,28 @@ class EquationGenerator(object):
       return generate_node(self._grammar.root,0,[])
 
    @classmethod
+   def translate(cls,s,replacements):
+      for find,replace in replacements:
+         s=replace.join(s.split(find))
+      return s
+
+   @classmethod
    def tokens_to_base_string(cls,tokens):
       # remove double negative
-      return "-".join("".join(tokens).split("--"))
+      return cls.translate("".join(tokens),[("-~","+")])
 
    @classmethod
    def base_to_latex(cls,base):
       # changes asterisk to dots
-      return "\cdot".join(base.split("*"))
+      return cls.translate(base,[("~","-"),("*","{\cdot}")])
 
    @classmethod
    def tokens_to_latex_string(cls,tokens):
-      return self.base_to_latex(self.tokens_to_base_string(tokens))
+      return cls.base_to_latex(cls.tokens_to_base_string(tokens))
 
    @classmethod
    def base_to_parseable(cls,base):
-      return ")".join("(".join(base.split("{")).split("}"))
+      return cls.translate(base,[("~","-"),("{","("),("}",")")])
 
    @classmethod
    def tokens_to_parseable_string(cls,tokens):
@@ -372,13 +393,41 @@ class EquationGenerator(object):
          try:
             for x in [float(x)/100. for x in range(-1000,1000)]:
                self._evaluator.evaluate(s,{'x':x})
-         except Exception,e:
+         except Exception,ex:
             valid=False
-            print "Bad evaluation: {0}".format(e.message)
       return tokens
 
-if __name__ == "__main__":
+class RandomEquationBot(ImageBot):
+   def __init__(self,*args,**kwargs):
+      super(RandomEquationBot,self).__init__(*args,**kwargs)
+      self._eval=EquationEvaluator()
+      self._gen=EquationGenerator(self._eval)
 
+   def generate(self):
+      output=self._gen.generate_valid(min_token_length=4)
+      print self._gen.tokens_to_latex_string(output)
+      filename=self.generate_image(self._gen.tokens_to_latex_string(output))
+      message="f(x)={0}".format(self._gen.tokens_to_parseable_string(output))
+      return (filename,message)
+
+   def generate_image(self,image_text):
+      url='http://chart.apis.google.com/chart'
+      params={'cht':'tx','chs':50,'chl':image_text}
+      r = requests.get(url,params=params)
+
+      filename=None
+      if r.status_code not in [200]:
+         print "Unable to generate image! Status code: {0}".format(r.status_code)
+      else:
+         filename="eq.png"
+         with open(filename, 'wb') as fd:
+          for chunk in r.iter_content(1024):
+              fd.write(chunk)
+
+      return filename
+
+def test():
+   #TODO: make a unit test with some of this(and more)
    evaluator=EquationEvaluator()
    generator=EquationGenerator(evaluator)
 
@@ -390,11 +439,15 @@ if __name__ == "__main__":
    print output_str_base, "len={0}".format(len(output_str_base))
 
    output_str_parseable=generator.base_to_parseable(output_str_base)
-
    print output_str_parseable
    evaluator.evaluate_print(output_str_parseable,{'x':5})
 
-   import urllib
-   print urllib.quote_plus(generator.base_to_latex(output_str_base))
+   output_str_latex=generator.base_to_latex(output_str_base)
+   print output_str_latex
 
+if __name__ == "__main__":
+   bot=RandomEquationBot(oauth_config_file="randomeqbot.oauth",\
+      period_between_tweets=duration.Duration(hours=3))
+   print bot.run()
 
+   # test()
