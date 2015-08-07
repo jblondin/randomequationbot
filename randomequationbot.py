@@ -406,7 +406,7 @@ class RandomEquationBot(ImageBot):
    def generate(self):
       output=self._gen.generate_valid(min_token_length=4)
       print self._gen.tokens_to_latex_string(output)
-      filename=self.generate_image(self._gen.tokens_to_latex_string(output))
+      filename=self.generate_image("f(x)={0}".format(self._gen.tokens_to_latex_string(output)))
       message="f(x)={0}".format(self._gen.tokens_to_parseable_string(output))
       return (filename,message)
 
